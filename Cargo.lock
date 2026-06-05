@@ -567,11 +567,21 @@ dependencies = [
  "anyhow",
  "clap",
  "hex",
+ "runix-bootctl",
  "runix-chunk",
  "runix-update-protocol",
  "serde",
  "serde_json",
  "ureq",
+]
+
+[[package]]
+name = "runix-bootctl"
+version = "0.1.0"
+dependencies = [
+ "runix-update-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
