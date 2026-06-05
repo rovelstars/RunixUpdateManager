@@ -1,0 +1,12 @@
+[package]
+name = "runix-update-protocol"
+version = "0.1.0"
+edition = "2024"
+description = "Shared types and signing for the RunixOS update protocol (RUM client + RunixUpdateServer)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = "2"
+base64 = "0.22"
+hex = "0.4"
