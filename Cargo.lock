@@ -264,6 +264,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastcdc"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf51ceb43e96afbfe4dd5c6f6082af5dfd60e220820b8123792d61963f2ce6bc"
+
+[[package]]
 name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -561,10 +567,22 @@ dependencies = [
  "anyhow",
  "clap",
  "hex",
+ "runix-chunk",
  "runix-update-protocol",
  "serde",
  "serde_json",
  "ureq",
+]
+
+[[package]]
+name = "runix-chunk"
+version = "0.1.0"
+dependencies = [
+ "fastcdc",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
