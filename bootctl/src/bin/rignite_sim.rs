@@ -1,14 +1,24 @@
-//! rignite-sim - simulates the Rignite bootloader's slot selection, so the
-//! trial-boot / rollback cycle is testable without rebooting real hardware.
+//! rignite-sim - simulates the Rignite bootloader's slot selection so the
+//! trial-boot / rollback cycle is testable without rebooting real hardware. It
+//! reads/writes the same fixed binary boot-control block real Rignite uses.
 //!
 //! Usage:
 //!   rignite-sim <root> status   show the boot-control state
 //!   rignite-sim <root> boot     pick the bootable slot, account for a trial boot
-//!
-//! Run `boot` repeatedly without `rum confirm` to watch a bad update roll back.
 
 use runix_bootctl::{BootControl, Slot};
 use std::path::PathBuf;
+
+fn load(path: &std::path::Path) -> BootControl {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| {
+        eprintln!("rignite-sim: cannot read {path:?}: {e}");
+        std::process::exit(1);
+    });
+    BootControl::from_bytes(&bytes).unwrap_or_else(|| {
+        eprintln!("rignite-sim: invalid boot-control block at {path:?}");
+        std::process::exit(1);
+    })
+}
 
 fn describe(bc: &BootControl, s: Slot) -> String {
     let m = bc.meta(s);
@@ -36,16 +46,8 @@ fn main() {
         eprintln!("usage: rignite-sim <root> <boot|status>");
         std::process::exit(2);
     }
-    let root = PathBuf::from(&args[1]);
-    let state_path = root.join("bootctl.json");
-
-    let mut bc = match BootControl::load(&state_path) {
-        Ok(bc) => bc,
-        Err(e) => {
-            eprintln!("rignite-sim: cannot load {state_path:?}: {e}");
-            std::process::exit(1);
-        }
-    };
+    let path = PathBuf::from(&args[1]).join("bootctl.bin");
+    let mut bc = load(&path);
 
     match args[2].as_str() {
         "status" => {
@@ -59,7 +61,7 @@ fn main() {
             }
             Some(s) => {
                 bc.begin_boot(s);
-                if let Err(e) = bc.save(&state_path) {
+                if let Err(e) = std::fs::write(&path, bc.to_bytes()) {
                     eprintln!("rignite-sim: save failed: {e}");
                     std::process::exit(1);
                 }

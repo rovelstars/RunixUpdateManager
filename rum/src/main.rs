@@ -93,10 +93,25 @@ enum Command {
 // ---- slot layout ----
 
 fn bootctl_path(root: &Path) -> PathBuf {
-    root.join("bootctl.json")
+    root.join("bootctl.bin")
 }
 fn slot_image(root: &Path, slot: Slot) -> PathBuf {
     root.join(format!("slot-{}", slot.as_str().to_lowercase())).join("core.img")
+}
+
+fn load_bc(root: &Path) -> Result<BootControl> {
+    let p = bootctl_path(root);
+    let bytes = std::fs::read(&p).with_context(|| format!("reading boot-control {p:?}"))?;
+    BootControl::from_bytes(&bytes).ok_or_else(|| anyhow!("invalid boot-control block {p:?}"))
+}
+fn save_bc(root: &Path, bc: &BootControl) -> Result<()> {
+    std::fs::write(bootctl_path(root), bc.to_bytes())
+        .with_context(|| format!("writing boot-control in {root:?}"))
+}
+/// Parse "X.Y.Z" into bootctl's no_std Version (via the protocol parser).
+fn bc_version(s: &str) -> Result<runix_bootctl::Version> {
+    let v: Version = s.parse().map_err(|_| anyhow!("bad version {s:?}"))?;
+    Ok(runix_bootctl::Version::new(v.major, v.minor, v.patch))
 }
 
 // ---- chunk store + reassembly (shared by apply + stage) ----
@@ -205,19 +220,18 @@ fn check(
 }
 
 fn init(root: &Path, image: &Path, version: &str) -> Result<()> {
-    let version: Version = version.parse().map_err(|_| anyhow!("bad --version"))?;
+    let version = bc_version(version)?;
     let dst = slot_image(root, Slot::A);
     std::fs::create_dir_all(dst.parent().unwrap())?;
     std::fs::create_dir_all(slot_image(root, Slot::B).parent().unwrap())?;
     std::fs::copy(image, &dst).with_context(|| format!("copying image to {dst:?}"))?;
-    let bc = BootControl::initial(version);
-    bc.save(&bootctl_path(root))?;
+    save_bc(root, &BootControl::initial(version))?;
     println!("Initialized A/B root at {root:?}: slot A = {version} (good, current)");
     Ok(())
 }
 
 fn print_status(root: &Path) -> Result<()> {
-    let bc = BootControl::load(&bootctl_path(root))?;
+    let bc = load_bc(root)?;
     for s in [Slot::A, Slot::B] {
         let m = bc.meta(s);
         let ver = m.version.map(|v| v.to_string()).unwrap_or_else(|| "empty".into());
@@ -243,8 +257,8 @@ fn print_status(root: &Path) -> Result<()> {
 }
 
 fn stage(root: &Path, index: &str, store: &str, version: &str, expect: &str) -> Result<()> {
-    let version: Version = version.parse().map_err(|_| anyhow!("bad --version"))?;
-    let mut bc = BootControl::load(&bootctl_path(root))?;
+    let version = bc_version(version)?;
+    let mut bc = load_bc(root)?;
     let target = bc.inactive();
     let active_img = slot_image(root, bc.current);
     let seed = std::fs::read(&active_img).ok();
@@ -260,7 +274,7 @@ fn stage(root: &Path, index: &str, store: &str, version: &str, expect: &str) -> 
     std::fs::write(&dst, &data).with_context(|| format!("writing slot {dst:?}"))?;
 
     bc.stage(target, version);
-    bc.save(&bootctl_path(root))?;
+    save_bc(root, &bc)?;
     println!(
         "Staged {} to slot {} (trial). Reboot to try it; `rum confirm` after a good boot.",
         version,
@@ -270,9 +284,9 @@ fn stage(root: &Path, index: &str, store: &str, version: &str, expect: &str) -> 
 }
 
 fn confirm(root: &Path) -> Result<()> {
-    let mut bc = BootControl::load(&bootctl_path(root))?;
+    let mut bc = load_bc(root)?;
     bc.mark_successful();
-    bc.save(&bootctl_path(root))?;
+    save_bc(root, &bc)?;
     println!("Confirmed slot {} good (update committed).", bc.current.as_str());
     Ok(())
 }

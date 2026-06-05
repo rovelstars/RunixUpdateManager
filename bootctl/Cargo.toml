@@ -2,13 +2,10 @@
 name = "runix-bootctl"
 version = "0.1.0"
 edition = "2024"
-description = "A/B boot-control state + bootloader slot selection for RunixOS (shared by RUM and Rignite)"
+description = "A/B boot-control state + slot selection for RunixOS, shared by RUM (std) and Rignite (no_std). No deps, fixed binary on-disk format."
 
 [[bin]]
 name = "rignite-sim"
 path = "src/bin/rignite_sim.rs"
 
 [dependencies]
-runix-update-protocol = { path = "../protocol" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
