@@ -7,6 +7,9 @@
 //! - `stage`   reassemble the new image into the INACTIVE slot (seeded by the
 //!             active slot), verify hash, and stage it for next boot.             (P3)
 //! - `confirm` mark the currently-booted slot good (commit the update).           (P3)
+//! - `deploy`  build a composefs deployment from a /Core tree, stage it.          (P4)
+//! - `pull`    fetch a composefs deployment from a remote object store, stage it. (P4)
+//! - `mount`   mount a staged composefs deployment's /Core (initramfs path).      (P4)
 //!
 //! Slots are files under a root dir so the whole cycle is host-testable; on a
 //! real device they are partitions and the boot-control area is protected.
@@ -87,6 +90,37 @@ enum Command {
     Confirm {
         #[arg(long)]
         root: PathBuf,
+    },
+    /// Build a composefs deployment from a /Core tree and stage it for boot.
+    Deploy {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        core: PathBuf,
+        #[arg(long)]
+        version: String,
+    },
+    /// Pull a composefs deployment from a remote object store and stage it.
+    Pull {
+        #[arg(long)]
+        root: PathBuf,
+        /// Base URL of the published repo (serves /objects/<hh>/<rest>).
+        #[arg(long)]
+        server: String,
+        #[arg(long)]
+        version: String,
+        /// Expected image fs-verity hash (verity_root_hash from the manifest).
+        #[arg(long)]
+        expect: String,
+    },
+    /// Mount a staged composefs deployment's /Core (the initramfs boot path).
+    Mount {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        target: PathBuf,
     },
 }
 
@@ -211,8 +245,8 @@ fn check(
             println!("  signed by {} (verified), {}/{}", signed.key_id, m.channel, m.arch);
             println!("  image index {}  verity {}", m.image_index, m.verity_root_hash);
             println!(
-                "\nNext: rum stage --root <root> --index {} --store <store> --version {} --expect {}",
-                m.image_index, m.version, m.verity_root_hash
+                "\nNext: rum pull --root <root> --server <repo-base-url> --version {} --expect {}",
+                m.version, m.verity_root_hash
             );
         }
     }
@@ -291,6 +325,93 @@ fn confirm(root: &Path) -> Result<()> {
     Ok(())
 }
 
+// ---- composefs deployment path (replaces the chunk/full-image path) ----
+
+fn repo_dir(root: &Path) -> PathBuf {
+    root.join("repo")
+}
+
+/// Open the deployment repo. Set RUNIX_INSECURE to skip fs-verity sealing when
+/// testing on a host filesystem that lacks fs-verity (never on device).
+fn open_repo(root: &Path) -> Result<runix_deployment::Repo> {
+    if std::env::var_os("RUNIX_INSECURE").is_some() {
+        runix_deployment::Repo::open_insecure(repo_dir(root))
+    } else {
+        runix_deployment::Repo::open(repo_dir(root))
+    }
+}
+
+fn deploy(root: &Path, core: &Path, version: &str) -> Result<()> {
+    let ver = bc_version(version)?;
+    let repo = open_repo(root)?;
+    println!("Building composefs deployment {ver} from {}", core.display());
+    let dep = repo.build_deployment(core, ver)?;
+    println!("  image core-{ver}  verity {}", dep.verity_id);
+
+    let bc = match load_bc(root) {
+        Ok(mut bc) => {
+            let target = bc.inactive();
+            bc.stage(target, ver);
+            println!("Staged into slot {} (trial).", target.as_str());
+            bc
+        }
+        Err(_) => {
+            println!("No boot-control yet; initializing slot A as current.");
+            BootControl::initial(ver)
+        }
+    };
+    save_bc(root, &bc)?;
+    println!("Deployment {ver} recorded. Reboot to try; `rum confirm` after a good boot.");
+    Ok(())
+}
+
+/// URL of a content-addressed object in a published repo (objects/<hh>/<rest>).
+fn object_url(base: &str, hash: &str) -> String {
+    format!("{}/objects/{}/{}", base.trim_end_matches('/'), &hash[..2], &hash[2..])
+}
+
+fn pull(root: &Path, server: &str, version: &str, expect: &str) -> Result<()> {
+    let ver = bc_version(version)?;
+    let repo = open_repo(root)?;
+    let fetch = |hash: &str| -> Result<Vec<u8>> {
+        let url = object_url(server, hash);
+        let resp = ureq::get(&url).call().with_context(|| format!("GET {url}"))?;
+        let mut buf = Vec::new();
+        resp.into_reader().read_to_end(&mut buf).context("reading object body")?;
+        Ok(buf)
+    };
+    println!("Pulling deployment {ver} from {server}");
+    let dep = repo.pull(ver, expect, fetch)?;
+    println!("  image core-{ver}  verity {}", dep.verity_id);
+
+    let bc = match load_bc(root) {
+        Ok(mut bc) => {
+            let target = bc.inactive();
+            bc.stage(target, ver);
+            println!("Staged into slot {} (trial).", target.as_str());
+            bc
+        }
+        Err(_) => {
+            println!("No boot-control yet; initializing slot A as current.");
+            BootControl::initial(ver)
+        }
+    };
+    save_bc(root, &bc)?;
+    println!("Pulled + staged {ver}. Reboot to try; `rum confirm` after a good boot.");
+    Ok(())
+}
+
+fn mount_deploy(root: &Path, version: &str, target: &Path) -> Result<()> {
+    let ver = bc_version(version)?;
+    let repo = open_repo(root)?;
+    // The image is keyed by version; verity_id is unused for name-based mount.
+    let dep = runix_deployment::Deployment { version: ver, verity_id: String::new() };
+    std::fs::create_dir_all(target).with_context(|| format!("creating mount target {target:?}"))?;
+    repo.mount(&dep, target)?;
+    println!("Mounted deployment {ver} at {target:?}");
+    Ok(())
+}
+
 fn apply(index: &str, store: &str, seed: Option<PathBuf>, out: &Path, expect: &str) -> Result<()> {
     let seed_data = match &seed {
         Some(p) => Some(std::fs::read(p).with_context(|| format!("reading seed {p:?}"))?),
@@ -315,5 +436,8 @@ fn main() -> Result<()> {
             stage(&root, &index, &store, &version, &expect)
         }
         Command::Confirm { root } => confirm(&root),
+        Command::Deploy { root, core, version } => deploy(&root, &core, &version),
+        Command::Pull { root, server, version, expect } => pull(&root, &server, &version, &expect),
+        Command::Mount { root, version, target } => mount_deploy(&root, &version, &target),
     }
 }

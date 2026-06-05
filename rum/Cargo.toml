@@ -12,6 +12,7 @@ path = "src/main.rs"
 runix-update-protocol = { path = "../protocol" }
 runix-chunk = { path = "../chunk" }
 runix-bootctl = { path = "../bootctl" }
+runix-deployment = { path = "../deployment" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", features = ["json"] }

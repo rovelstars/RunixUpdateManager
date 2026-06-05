@@ -1,0 +1,15 @@
+[package]
+name = "runix-init"
+version = "0.1.0"
+edition = "2024"
+description = "RunixOS stage-0 init (initramfs /init): assemble /Core from a composefs deployment and switch_root to Rev"
+
+[[bin]]
+name = "init"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+rustix = { version = "1", features = ["mount", "fs", "process", "thread", "std"] }
+runix-bootctl = { path = "../bootctl" }
+runix-deployment = { path = "../deployment" }

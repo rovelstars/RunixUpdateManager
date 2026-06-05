@@ -1,0 +1,10 @@
+[package]
+name = "runix-deployment"
+version = "0.1.0"
+edition = "2024"
+description = "RunixOS deployment engine - thin glue over composefs-rs (build/mount/verify) + bootctl"
+
+[dependencies]
+runix-bootctl = { path = "../bootctl" }
+composefs = { git = "https://github.com/composefs/composefs-rs", tag = "v0.6.0" }
+anyhow = "1"
